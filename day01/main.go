@@ -32,11 +32,12 @@ func main() {
 			continue
 		}
 
-		if direction == 'L' {
+		switch direction {
+		case 'L':
 			// For left rotations, subtract and handle wraparound
 			// Use modulo arithmetic with adjustment for negative numbers
 			position = ((position-distance)%100 + 100) % 100
-		} else if direction == 'R' {
+		case 'R':
 			// For right rotations, add and handle wraparound
 			position = (position + distance) % 100
 		}

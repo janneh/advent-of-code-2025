@@ -104,12 +104,78 @@ func solveProblem(problem []string) int {
 	return result
 }
 
+func solveRightToLeft(problem []string) int {
+	// Read columns right-to-left
+	// Each column represents a number (read top-to-bottom)
+	if len(problem) == 0 || len(problem[0]) == 0 {
+		return 0
+	}
+
+	width := len(problem[0])
+	var operator rune
+	numbers := []int{}
+
+	// Process columns from right to left
+	for col := width - 1; col >= 0; col-- {
+		// Extract digits from this column (top to bottom, excluding operator row)
+		digitStr := ""
+		for row := 0; row < len(problem)-1; row++ {
+			if col < len(problem[row]) && problem[row][col] != ' ' {
+				digitStr += string(problem[row][col])
+			}
+		}
+
+		// Check for operator in last row
+		lastRow := problem[len(problem)-1]
+		if col < len(lastRow) {
+			ch := lastRow[col]
+			if ch == '*' || ch == '+' {
+				operator = rune(ch)
+			}
+		}
+
+		// If we found a number, add it
+		if digitStr != "" {
+			num, _ := strconv.Atoi(digitStr)
+			numbers = append(numbers, num)
+		}
+	}
+
+	// Evaluate based on operator
+	if len(numbers) == 0 {
+		return 0
+	}
+
+	result := numbers[0]
+	for i := 1; i < len(numbers); i++ {
+		if operator == '*' {
+			result *= numbers[i]
+		} else {
+			result += numbers[i]
+		}
+	}
+
+	return result
+}
+
 func part1(lines []string) int {
 	problems := parseWorksheet(lines)
 	grandTotal := 0
 
 	for _, problem := range problems {
 		answer := solveProblem(problem)
+		grandTotal += answer
+	}
+
+	return grandTotal
+}
+
+func part2(lines []string) int {
+	problems := parseWorksheet(lines)
+	grandTotal := 0
+
+	for _, problem := range problems {
+		answer := solveRightToLeft(problem)
 		grandTotal += answer
 	}
 
@@ -136,4 +202,5 @@ func main() {
 	}
 
 	fmt.Printf("Part 1: %d\n", part1(lines))
+	fmt.Printf("Part 2: %d\n", part2(lines))
 }

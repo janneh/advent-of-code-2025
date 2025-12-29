@@ -148,6 +148,44 @@ func part1(points []Point, numConnections int) int {
 	return 0
 }
 
+func part2(points []Point) int {
+	n := len(points)
+
+	// Calculate all pairwise distances
+	var edges []Edge
+	for i := range n {
+		for j := i + 1; j < n; j++ {
+			dist := distance(points[i], points[j])
+			edges = append(edges, Edge{i, j, dist})
+		}
+	}
+
+	// Sort edges by distance
+	sort.Slice(edges, func(i, j int) bool {
+		return edges[i].dist < edges[j].dist
+	})
+
+	// Use Union-Find to connect boxes until all are in one circuit
+	uf := NewUnionFind(n)
+	successfulConnections := 0
+	var lastEdge Edge
+
+	for _, edge := range edges {
+		if uf.Union(edge.i, edge.j) {
+			successfulConnections++
+			lastEdge = edge
+
+			// All boxes in one circuit when we've made n-1 successful connections
+			if successfulConnections == n-1 {
+				break
+			}
+		}
+	}
+
+	// Return product of X coordinates of last two boxes connected
+	return points[lastEdge.i].x * points[lastEdge.j].x
+}
+
 func main() {
 	file, err := os.Open("input.txt")
 	if err != nil {
@@ -178,4 +216,5 @@ func main() {
 	}
 
 	fmt.Printf("Part 1: %d\n", part1(points, 1000))
+	fmt.Printf("Part 2: %d\n", part2(points))
 }

@@ -4,12 +4,21 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 )
 
 type Point struct {
 	x, y int
+}
+
+type Edge struct {
+	x1, y1, x2, y2 int
+}
+
+type RectCandidate struct {
+	i, j, area int
 }
 
 func parseInput(filename string) ([]Point, error) {
@@ -101,89 +110,177 @@ func isInside(p Point, polygon []Point) bool {
 	return count%2 == 1
 }
 
+func isOnEdge(p Point, tiles []Point) bool {
+	for i := 0; i < len(tiles); i++ {
+		next := (i + 1) % len(tiles)
+		from := tiles[i]
+		to := tiles[next]
+
+		// Check if p is on the line segment from -> to
+		if from.x == to.x && p.x == from.x {
+			// Same column
+			minY, maxY := from.y, to.y
+			if minY > maxY {
+				minY, maxY = maxY, minY
+			}
+			if p.y >= minY && p.y <= maxY {
+				return true
+			}
+		} else if from.y == to.y && p.y == from.y {
+			// Same row
+			minX, maxX := from.x, to.x
+			if minX > maxX {
+				minX, maxX = maxX, minX
+			}
+			if p.x >= minX && p.x <= maxX {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func part2(tiles []Point) int {
-	// Create a set of red tiles
 	redTiles := make(map[Point]bool)
 	for _, tile := range tiles {
 		redTiles[tile] = true
 	}
 
-	// Pre-compute edge tiles for O(1) lookup
-	edgeTiles := make(map[Point]bool)
+	edges := make([]Edge, 0, len(tiles))
 	for i := range len(tiles) {
 		next := (i + 1) % len(tiles)
-		p1, p2 := tiles[i], tiles[next]
-
-		if p1.x == p2.x {
-			// Vertical line
-			minY, maxY := min(p1.y, p2.y), max(p1.y, p2.y)
-			for y := minY + 1; y < maxY; y++ {
-				edgeTiles[Point{p1.x, y}] = true
-			}
-		} else if p1.y == p2.y {
-			// Horizontal line
-			minX, maxX := min(p1.x, p2.x), max(p1.x, p2.x)
-			for x := minX + 1; x < maxX; x++ {
-				edgeTiles[Point{x, p1.y}] = true
-			}
-		}
+		edges = append(edges, Edge{tiles[i].x, tiles[i].y, tiles[next].x, tiles[next].y})
 	}
 
-	// Memoize point-in-polygon results for efficiency
-	insideCache := make(map[Point]bool)
-
-	isGreen := func(p Point) bool {
-		if redTiles[p] || edgeTiles[p] {
-			return true
+	intersectsEdge := func(minX, maxX, minY, maxY int, edge Edge) bool {
+		edgeMinX, edgeMaxX := edge.x1, edge.x2
+		if edgeMinX > edgeMaxX {
+			edgeMinX, edgeMaxX = edgeMaxX, edgeMinX
 		}
-
-		// Check if inside polygon (with memoization)
-		if val, ok := insideCache[p]; ok {
-			return val
+		edgeMinY, edgeMaxY := edge.y1, edge.y2
+		if edgeMinY > edgeMaxY {
+			edgeMinY, edgeMaxY = edgeMaxY, edgeMinY
 		}
-		result := isInside(p, tiles)
-		insideCache[p] = result
-		return result
+		return minX < edgeMaxX && maxX > edgeMinX && minY < edgeMaxY && maxY > edgeMinY
 	}
 
-	// Find the largest rectangle with red corners and all red/green tiles
-	maxArea := 0
+	var candidates []RectCandidate
+	areaLimit := part1(tiles) // Use theoretical max
 
 	for i := range len(tiles) {
 		for j := i + 1; j < len(tiles); j++ {
-			minX := min(tiles[i].x, tiles[j].x)
-			maxX := max(tiles[i].x, tiles[j].x)
-			minY := min(tiles[i].y, tiles[j].y)
-			maxY := max(tiles[i].y, tiles[j].y)
+			p1 := tiles[i]
+			p2 := tiles[j]
 
-			width := maxX - minX + 1
-			height := maxY - minY + 1
-			area := width * height
-
-			// Skip rectangles that are too large to be all green
-			// Increase threshold to see if we're missing larger rectangles
-			if area > 5000000 {
+			if p1.x == p2.x || p1.y == p2.y {
 				continue
 			}
 
-			// Check all tiles in the rectangle
-			valid := true
-			for x := minX; x <= maxX && valid; x++ {
-				for y := minY; y <= maxY && valid; y++ {
-					if !isGreen(Point{x, y}) {
-						valid = false
+			width := abs(p2.x-p1.x) + 1
+			height := abs(p2.y-p1.y) + 1
+			area := width * height
+
+			if area > areaLimit {
+				continue
+			}
+
+			candidates = append(candidates, RectCandidate{i, j, area})
+		}
+	}
+
+	fmt.Fprintf(os.Stderr, "Generated %d candidates, now sorting...\n", len(candidates))
+
+	sort.Slice(candidates, func(a, b int) bool {
+		return candidates[a].area > candidates[b].area
+	})
+
+	fmt.Fprintf(os.Stderr, "Sorting complete, starting validation...\n")
+
+	insideCache := make(map[Point]bool)
+
+	isValidTileCached := func(p Point) bool {
+		if redTiles[p] {
+			return true
+		}
+		if result, ok := insideCache[p]; ok {
+			return result
+		}
+		valid := isOnEdge(p, tiles) || isInside(p, tiles)
+		insideCache[p] = valid
+		return valid
+	}
+
+	maxArea := 0
+	checked := 0
+
+	for _, cand := range candidates {
+		if cand.area <= maxArea {
+			break
+		}
+
+		checked++
+		if checked%10000 == 0 {
+			fmt.Fprintf(os.Stderr, "Checked %d/%d candidates, maxArea: %d, current: %d\n",
+				checked, len(candidates), maxArea, cand.area)
+		}
+
+		p1 := tiles[cand.i]
+		p2 := tiles[cand.j]
+
+		minX, maxX := p1.x, p2.x
+		if minX > maxX {
+			minX, maxX = maxX, minX
+		}
+		minY, maxY := p1.y, p2.y
+		if minY > maxY {
+			minY, maxY = maxY, minY
+		}
+
+		if !isValidTileCached(Point{minX, minY}) || !isValidTileCached(Point{maxX, maxY}) ||
+			!isValidTileCached(Point{minX, maxY}) || !isValidTileCached(Point{maxX, minY}) {
+			continue
+		}
+
+		hasIntersection := false
+		for _, edge := range edges {
+			if intersectsEdge(minX, maxX, minY, maxY, edge) {
+				hasIntersection = true
+				break
+			}
+		}
+
+		if !hasIntersection {
+			maxArea = cand.area
+			continue
+		}
+
+		allValid := true
+		for x := minX; x <= maxX && allValid; x++ {
+			if !isValidTileCached(Point{x, minY}) || (minY != maxY && !isValidTileCached(Point{x, maxY})) {
+				allValid = false
+			}
+		}
+
+		if allValid {
+			for y := minY + 1; y < maxY && allValid; y++ {
+				if !isValidTileCached(Point{minX, y}) || (minX != maxX && !isValidTileCached(Point{maxX, y})) {
+					allValid = false
+				}
+			}
+		}
+
+		if allValid && maxX-minX > 1 && maxY-minY > 1 {
+			for x := minX + 1; x < maxX && allValid; x++ {
+				for y := minY + 1; y < maxY && allValid; y++ {
+					if !isValidTileCached(Point{x, y}) {
+						allValid = false
 					}
 				}
 			}
-
-			if valid && area > maxArea {
-				maxArea = area
-				fmt.Fprintf(os.Stderr, "New max: %d (tiles %d,%d at (%d,%d)-(%d,%d) w=%d h=%d)\n",
-					area, i, j, tiles[i].x, tiles[i].y, tiles[j].x, tiles[j].y, width, height)
-			}
 		}
-		if i%100 == 0 {
-			fmt.Fprintf(os.Stderr, "Progress: %d/%d, maxArea: %d\n", i, len(tiles), maxArea)
+
+		if allValid {
+			maxArea = cand.area
 		}
 	}
 

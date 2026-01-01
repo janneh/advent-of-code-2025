@@ -9,12 +9,12 @@ import (
 )
 
 type Machine struct {
-	target  []int
-	buttons [][]int
+	target   []int
+	buttons  [][]int
+	joltages []int
 }
 
 func parseLine(line string) Machine {
-	// Extract target pattern [.##.]
 	start := strings.Index(line, "[")
 	end := strings.Index(line, "]")
 	pattern := line[start+1 : end]
@@ -26,7 +26,6 @@ func parseLine(line string) Machine {
 		}
 	}
 
-	// Extract buttons (0,1,3) (2,3) etc.
 	rest := line[end+1:]
 	var buttons [][]int
 
@@ -53,30 +52,38 @@ func parseLine(line string) Machine {
 		rest = rest[end+1:]
 	}
 
-	return Machine{target: target, buttons: buttons}
+	var joltages []int
+	joltStart := strings.Index(line, "{")
+	joltEnd := strings.Index(line, "}")
+	if joltStart != -1 && joltEnd != -1 {
+		joltStr := line[joltStart+1 : joltEnd]
+		parts := strings.Split(joltStr, ",")
+		for _, p := range parts {
+			num, err := strconv.Atoi(strings.TrimSpace(p))
+			if err == nil {
+				joltages = append(joltages, num)
+			}
+		}
+	}
+
+	return Machine{target: target, buttons: buttons, joltages: joltages}
 }
 
-// Brute force search for minimum button presses
-func solveMachine(machine Machine) int {
+func solvePart1(machine Machine) int {
 	numLights := len(machine.target)
 	numButtons := len(machine.buttons)
 
-	// For reasonable number of buttons, try all combinations
 	if numButtons > 25 {
-		// Use heuristic for very large problems
-		return solveMachineHeuristic(machine)
+		return -1
 	}
 
 	minPresses := numButtons + 1
 
-	// Try all 2^n combinations of button presses
 	for mask := 0; mask < (1 << numButtons); mask++ {
-		// Simulate pressing buttons according to mask
 		lights := make([]int, numLights)
 
-		for buttonIdx := 0; buttonIdx < numButtons; buttonIdx++ {
+		for buttonIdx := range numButtons {
 			if (mask & (1 << buttonIdx)) != 0 {
-				// Press this button
 				for _, lightIdx := range machine.buttons[buttonIdx] {
 					if lightIdx < numLights {
 						lights[lightIdx] ^= 1
@@ -85,7 +92,6 @@ func solveMachine(machine Machine) int {
 			}
 		}
 
-		// Check if we achieved target
 		match := true
 		for i := 0; i < numLights; i++ {
 			if lights[i] != machine.target[i] {
@@ -95,7 +101,6 @@ func solveMachine(machine Machine) int {
 		}
 
 		if match {
-			// Count number of button presses
 			presses := 0
 			for buttonIdx := 0; buttonIdx < numButtons; buttonIdx++ {
 				if (mask & (1 << buttonIdx)) != 0 {
@@ -109,136 +114,212 @@ func solveMachine(machine Machine) int {
 	}
 
 	if minPresses == numButtons+1 {
-		return -1 // No solution found
+		return -1
 	}
 	return minPresses
 }
 
-// Heuristic solver for larger problems using Gaussian elimination
-func solveMachineHeuristic(machine Machine) int {
-	numLights := len(machine.target)
+func solvePart2(machine Machine) int {
+	numCounters := len(machine.joltages)
 	numButtons := len(machine.buttons)
 
-	// Build augmented matrix [A | b]
-	matrix := make([][]int, numLights)
-	for i := range matrix {
-		matrix[i] = make([]int, numButtons+1)
-		matrix[i][numButtons] = machine.target[i]
+	if numCounters == 0 || numButtons == 0 {
+		return 0
 	}
 
-	// Fill matrix A
+	A := make([][]float64, numCounters)
+	for i := range A {
+		A[i] = make([]float64, numButtons)
+	}
+
 	for buttonIdx, button := range machine.buttons {
-		for _, lightIdx := range button {
-			if lightIdx < numLights {
-				matrix[lightIdx][buttonIdx] = 1
+		for _, counterIdx := range button {
+			if counterIdx < numCounters {
+				A[counterIdx][buttonIdx] = 1
 			}
 		}
 	}
 
-	// Gaussian elimination in GF(2)
-	pivotRow := 0
-	for col := 0; col < numButtons && pivotRow < numLights; col++ {
-		foundPivot := false
-		for row := pivotRow; row < numLights; row++ {
-			if matrix[row][col] == 1 {
-				matrix[pivotRow], matrix[row] = matrix[row], matrix[pivotRow]
-				foundPivot = true
-				break
-			}
-		}
+	b := make([]float64, numCounters)
+	for i, val := range machine.joltages {
+		b[i] = float64(val)
+	}
 
-		if !foundPivot {
-			continue
-		}
+	return recursiveDivideConquer(A, b, numButtons)
+}
 
-		for row := 0; row < numLights; row++ {
-			if row != pivotRow && matrix[row][col] == 1 {
-				for c := 0; c <= numButtons; c++ {
-					matrix[row][c] ^= matrix[pivotRow][c]
+func recursiveDivideConquer(A [][]float64, b []float64, numButtons int) int {
+	target := make([]int, len(b))
+	for i, v := range b {
+		target[i] = int(v)
+	}
+	memo := make(map[string]int)
+	result := solveRecursive(A, target, numButtons, memo)
+	return result
+}
+
+func solveRecursive(A [][]float64, target []int, numButtons int, memo map[string]int) int {
+	allZero := true
+	for _, v := range target {
+		if v != 0 {
+			allZero = false
+			break
+		}
+	}
+	if allZero {
+		return 0
+	}
+
+	key := arrayToString(target)
+	if val, ok := memo[key]; ok {
+		return val
+	}
+
+	minPresses := int(1e9)
+	numCounters := len(target)
+
+	parityTarget := make([]int, numCounters)
+	for i, v := range target {
+		if v%2 == 1 {
+			parityTarget[i] = 1
+		}
+	}
+
+	if numButtons > 25 {
+		memo[key] = -1
+		return -1
+	}
+
+	maxMask := 1 << numButtons
+	for mask := range maxMask {
+		parity := make([]int, numCounters)
+		effect := make([]int, numCounters)
+		pressCount := 0
+
+		for btn := range numButtons {
+			if (mask & (1 << btn)) != 0 {
+				pressCount++
+				for ctr := range numCounters {
+					if A[ctr][btn] > 0.5 {
+						parity[ctr] ^= 1 // XOR for parity
+						effect[ctr]++    // Actual effect
+					}
 				}
 			}
 		}
-		pivotRow++
-	}
 
-	// Check for inconsistency
-	for row := 0; row < numLights; row++ {
-		allZero := true
-		for col := 0; col < numButtons; col++ {
-			if matrix[row][col] != 0 {
-				allZero = false
+		parityMatch := true
+		for i := range parityTarget {
+			if parity[i] != parityTarget[i] {
+				parityMatch = false
 				break
 			}
 		}
-		if allZero && matrix[row][numButtons] == 1 {
-			return -1
-		}
-	}
 
-	// Back-substitution
-	solution := make([]int, numButtons)
-	pivotCols := make(map[int]int)
-	for row := 0; row < numLights; row++ {
-		for col := 0; col < numButtons; col++ {
-			if matrix[row][col] == 1 {
-				pivotCols[col] = row
+		if !parityMatch {
+			continue
+		}
+
+		remaining := make([]int, numCounters)
+		allEven := true
+		anyNegative := false
+
+		for i := range target {
+			remaining[i] = target[i] - effect[i]
+			if remaining[i] < 0 {
+				anyNegative = true
+				break
+			}
+			if remaining[i]%2 != 0 {
+				allEven = false
 				break
 			}
 		}
-	}
 
-	for col := numButtons - 1; col >= 0; col-- {
-		if row, isPivot := pivotCols[col]; isPivot {
-			val := matrix[row][numButtons]
-			for c := col + 1; c < numButtons; c++ {
-				val ^= (matrix[row][c] * solution[c])
+		if !allEven || anyNegative {
+			continue
+		}
+
+		halfRemaining := make([]int, numCounters)
+		for i := range remaining {
+			halfRemaining[i] = remaining[i] / 2
+		}
+
+		recursivePresses := solveRecursive(A, halfRemaining, numButtons, memo)
+		if recursivePresses != -1 {
+			// Formula: k + 2 * f((b-effect)/2)
+			totalPresses := pressCount + 2*recursivePresses
+			if totalPresses < minPresses {
+				minPresses = totalPresses
 			}
-			solution[col] = val
 		}
 	}
 
-	count := 0
-	for _, v := range solution {
-		count += v
+	result := -1
+	if minPresses < int(1e9) {
+		result = minPresses
 	}
 
-	return count
+	memo[key] = result
+	return result
+}
+
+func arrayToString(arr []int) string {
+	var sb strings.Builder
+	for i, v := range arr {
+		if i > 0 {
+			sb.WriteString(",")
+		}
+		fmt.Fprintf(&sb, "%d", v)
+	}
+	return sb.String()
 }
 
 func main() {
 	file, err := os.Open("input.txt")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error opening file: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 	defer file.Close()
 
-	totalPresses := 0
+	totalPart1 := 0
+	totalPart2 := 0
 	scanner := bufio.NewScanner(file)
-	lineNum := 0
+	machineNum := 0
+	skipped := 0
 
 	for scanner.Scan() {
-		lineNum++
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
 			continue
 		}
 
 		machine := parseLine(line)
-		presses := solveMachine(machine)
+		machineNum++
 
-		if presses == -1 {
-			fmt.Fprintf(os.Stderr, "No solution for machine %d\n", lineNum)
-			continue
+		presses1 := solvePart1(machine)
+		if presses1 != -1 {
+			totalPart1 += presses1
 		}
 
-		totalPresses += presses
+		presses2 := solvePart2(machine)
+		if presses2 == -1 {
+			fmt.Printf("Machine %d: SKIPPED (no solution found) - %d buttons, %d counters\n",
+				machineNum, len(machine.buttons), len(machine.joltages))
+			skipped++
+		} else {
+			totalPart2 += presses2
+		}
 	}
 
+	fmt.Printf("\nSkipped %d machines out of %d\n", skipped, machineNum)
+
 	if err := scanner.Err(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error reading file: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("Part 1: %d\n", totalPresses)
+	fmt.Printf("Part 1: %d\n", totalPart1)
+	fmt.Printf("Part 2: %d\n", totalPart2)
 }
